@@ -1,0 +1,17 @@
+version: "3.7"
+services:
+  go-router-dev:
+    build: .devcontainer
+    tty: true
+    volumes:
+      - ./:/src/:delegated
+      - ~/.ssh:/root/.ssh
+      - ~/.gitconfig:/root/.gitconfig
+    networks:
+      - go-router-net
+networks:
+  default:
+    name: bridge
+  go-router-net:
+    name: go-router-net
+    driver: bridge

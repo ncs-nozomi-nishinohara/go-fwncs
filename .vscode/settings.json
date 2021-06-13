@@ -1,0 +1,22 @@
+{
+    "go.delveConfig": {
+        "dlvLoadConfig": {
+            "followPointers": true,
+            "maxVariableRecurse": 1,
+            "maxStringLen": 10000,
+            "maxArrayValues": 500,
+            "maxStructFields": -1
+        }
+    },
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": true
+    },
+    // "go.testEnvFile": "${workspaceFolder}/.env",
+    "cSpell.ignoreWords": [
+        "goorg"
+    ],
+    "go.testFlags": [
+        "-v",
+    ]
+}
