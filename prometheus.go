@@ -52,8 +52,9 @@ func InstrumentHandlerInFlight(c Context) {
 
 func InstrumentHandlerDuration(c Context) {
 	now := time.Now()
-	method := c.Request().Method
-	name := c.Request().URL.Path
+	req := c.Request()
+	method := req.Method
+	name := req.URL.Path
 	c.Next()
 	status := c.GetStatus()
 	label := prometheus.Labels{
@@ -61,12 +62,13 @@ func InstrumentHandlerDuration(c Context) {
 		"code":    strconv.Itoa(status),
 		"method":  method,
 	}
-	duration.With(label).Observe(time.Since(now).Seconds())
+	go duration.With(label).Observe(time.Since(now).Seconds())
 }
 
 func InstrumentHandlerCounter(c Context) {
-	method := c.Request().Method
-	name := c.Request().URL.Path
+	req := c.Request()
+	method := req.Method
+	name := req.URL.Path
 	c.Next()
 	status := c.GetStatus()
 	label := prometheus.Labels{
@@ -74,12 +76,13 @@ func InstrumentHandlerCounter(c Context) {
 		"code":    strconv.Itoa(status),
 		"method":  method,
 	}
-	counter.With(label).Inc()
+	go counter.With(label).Inc()
 }
 
 func InstrumentHandlerResponseSize(c Context) {
-	method := c.Request().Method
-	name := c.Request().URL.Path
+	req := c.Request()
+	method := req.Method
+	name := req.URL.Path
 	c.Next()
 	status := c.GetStatus()
 	label := prometheus.Labels{
@@ -87,5 +90,5 @@ func InstrumentHandlerResponseSize(c Context) {
 		"code":    strconv.Itoa(status),
 		"method":  method,
 	}
-	responseSize.With(label).Observe(float64(c.ResponseSize()))
+	go responseSize.With(label).Observe(float64(c.ResponseSize()))
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -42,6 +43,21 @@ type LogTemplate struct {
 	Message    string
 }
 
+const (
+	// FormatShort time:{{.Time}}\tlevel:{{.Level}}\tmessage:{{.Message}}\n
+	FormatShort LogFormatType = "time:{{.Time}}\tlevel:{{.Level}}\tmessage:{{.Message}}\n"
+	// FormatStandard time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tmessage:{{.Message}}\n
+	FormatStandard LogFormatType = "time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tmessage:{{.Message}}\n"
+	// FormatLong time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tfuncname:{{.Funcname}}\tmessage:{{.Message}}\n
+	FormatLong LogFormatType = "time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tfuncname:{{.Funcname}}\tmessage:{{.Message}}\n"
+	// FormatDate 2006/01/02
+	FormatDate LogFormatType = "2006/01/02"
+	// FormatDatetime 2006/01/02 15:04:05
+	FormatDatetime LogFormatType = "2006/01/02 15:04:05"
+	// FormatMillisec 2006/01/02 15:04:05.00000
+	FormatMillisec LogFormatType = "2006/01/02 15:04:05.00000"
+)
+
 type LogFormatType string
 
 func (f LogFormatType) String() string {
@@ -61,22 +77,7 @@ func ConvertLogFmt(fmt string) LogFormatType {
 	}
 }
 
-const (
-	// FormatShort time:{{.Time}}\tlevel:{{.Level}}\tmessage:{{.Message}}\n
-	FormatShort LogFormatType = "time:{{.Time}}\tlevel:{{.Level}}\tmessage:{{.Message}}\n"
-	// FormatStandard time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tmessage:{{.Message}}\n
-	FormatStandard LogFormatType = "time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tmessage:{{.Message}}\n"
-	// FormatLong time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tfuncname:{{.Funcname}}\tmessage:{{.Message}}\n
-	FormatLong LogFormatType = "time:{{.Time}}\tlevel:{{.Level}}\tfilename:{{.Filename}}:{{.LineNumber}}\tfuncname:{{.Funcname}}\tmessage:{{.Message}}\n"
-)
-
-type TimeFormatType string
-
-func (t TimeFormatType) String() string {
-	return string(t)
-}
-
-func ConvertTimeFmt(fmt string) TimeFormatType {
+func ConvertTimeFmt(fmt string) LogFormatType {
 	switch strings.ToLower(fmt) {
 	case "date":
 		return FormatDate
@@ -89,19 +90,13 @@ func ConvertTimeFmt(fmt string) TimeFormatType {
 	}
 }
 
-const (
-	// FormatDate 2006/01/02
-	FormatDate TimeFormatType = "2006/01/02"
-	// FormatDatetime 2006/01/02 15:04:05
-	FormatDatetime TimeFormatType = "2006/01/02 15:04:05"
-	// FormatMillisec 2006/01/02 15:04:05.000
-	FormatMillisec TimeFormatType = "2006/01/02 15:04:05.000"
-)
-
 var Log ILogger = &logger{}
 var _ io.Writer = &logger{}
 
-func NewLogger(writer io.Writer, logLevel LogLevel, formatType LogFormatType, timeFmtTyp TimeFormatType) ILogger {
+var DefaultLogger = NewLogger(os.Stderr, FormatShort, FormatDatetime)
+
+func NewLogger(writer io.Writer, formatType LogFormatType, timeFmtTyp LogFormatType) ILogger {
+	logLevel := ConvertLevel(os.Getenv("LOG_LEVEL"))
 	t, err := template.New("log").Parse(formatType.String())
 	if err != nil {
 		panic(err)
@@ -135,7 +130,7 @@ func (l LogLevel) String() string {
 
 func ConvertLevel(level string) LogLevel {
 	switch strings.ToLower(level) {
-	case "critical":
+	case "critical", "crit":
 		return Critical
 	case "error", "err":
 		return Error
@@ -143,10 +138,10 @@ func ConvertLevel(level string) LogLevel {
 		return Warn
 	case "info", "prod":
 		return Info
-	case "debug", "dev":
+	case "debug", "dbg":
 		return Debug
 	default:
-		return Info
+		return Warn
 	}
 }
 
@@ -215,7 +210,6 @@ func (l *logger) Copy() ILogger {
 		skip:     l.skip + 1,
 	}
 }
-
 func (l *logger) ChangeFormatType(formatType LogFormatType) ILogger {
 	t, err := template.New("log").Parse(formatType.String())
 	if err != nil {

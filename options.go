@@ -1,51 +1,55 @@
 package fwncs
 
 import (
-	"os"
-
 	"github.com/newrelic/go-agent/v3/newrelic"
-	"go.elastic.co/apm/module/apmhttprouter"
+	"github.com/opentracing/opentracing-go"
 )
 
-const (
-	_prometheus = "prometheus"
-	_newrelic   = "newrelic"
-	elastic     = "elastic"
-)
+type Builder struct {
+	tracePrometheus    bool
+	elastic            []ElasticOption
+	newrelic           *newrelic.Application
+	opentracingTracer  opentracing.Tracer
+	opentracingOptions []OpentracingOption
+	logger             ILogger
+}
 
-type Builder map[string]interface{}
+type Options func(builder *Builder)
 
-type Options func(builder Builder)
-
-func (o Options) Apply(builder Builder) {
+func (o Options) Apply(builder *Builder) {
 	o(builder)
 }
 
-func NewrelicOptions(app *newrelic.Application) Options {
-	return func(builder Builder) {
-		builder[_newrelic] = app
+func UsePrometheus() Options {
+	return func(builder *Builder) {
+		builder.tracePrometheus = true
 	}
 }
 
-func ElasticAPMOptions(o ...apmhttprouter.Option) Options {
-	return func(builder Builder) {
-		builder[elastic] = o
+func UseElasticAPM(opts ...ElasticOption) Options {
+	return func(builder *Builder) {
+		builder.elastic = opts
 	}
 }
 
-func PrometheusOptions() Options {
-	return func(builder Builder) {
-		builder[_prometheus] = true
+func UseNewrelic(app *newrelic.Application) Options {
+	return func(builder *Builder) {
+		builder.newrelic = app
 	}
 }
 
-func defaultNewrelicApp() *newrelic.Application {
-	NEW_RELIC_APP_NAME := os.Getenv("NEW_RELIC_APP_NAME")
-	NEW_RELIC_LICENSE_KEY := os.Getenv("NEW_RELIC_LICENSE_KEY")
-	app, _ := newrelic.NewApplication(
-		newrelic.ConfigAppName(NEW_RELIC_APP_NAME),
-		newrelic.ConfigLicense(NEW_RELIC_LICENSE_KEY),
-		newrelic.ConfigDistributedTracerEnabled(true),
-	)
-	return app
+func UseOpentracing(tracer opentracing.Tracer, opts ...OpentracingOption) Options {
+	if tracer == nil {
+		tracer = getOpentracingTracer()
+	}
+	return func(builder *Builder) {
+		builder.opentracingTracer = tracer
+		builder.opentracingOptions = opts
+	}
+}
+
+func LoggerOptions(log ILogger) Options {
+	return func(builder *Builder) {
+		builder.logger = log
+	}
 }

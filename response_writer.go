@@ -1,52 +1,111 @@
 package fwncs
 
-import "net/http"
+import (
+	"bufio"
+	"io"
+	"net"
+	"net/http"
+)
 
 type (
-	Response struct {
-		StatusCode int
-		Header     http.Header
+	ResponseWriter interface {
+		http.ResponseWriter
+		http.Hijacker
+		http.Flusher
+		http.CloseNotifier
+
+		Status() int
+		Size() int
+		WriteString(string) (int, error)
+		Written() bool
+		WriteHeaderNow()
+
+		Pusher() http.Pusher
 	}
 	responseWriter struct {
 		http.ResponseWriter
-		resp Response
-		size int64
+		status int
+		size   int
+		log    ILogger
 	}
 )
 
-func (w *responseWriter) Write(buf []byte) (int, error) {
-	n, e := w.ResponseWriter.Write(buf)
-	if w.resp.StatusCode == 0 {
-		w.resp.StatusCode = http.StatusOK
+const noWritten = -1
+
+func (w *responseWriter) Write(buf []byte) (n int, err error) {
+	w.WriteHeaderNow()
+	n, err = w.ResponseWriter.Write(buf)
+	w.size += n
+	return
+}
+func (w *responseWriter) WriteHeader(code int) {
+	if code > 0 && w.status != code {
+		if w.Written() {
+			w.log.Debug("[WARNING] Headers were already written. Wanted to override status code %d with %d", w.status, code)
+		}
+		w.status = code
+		w.ResponseWriter.WriteHeader(code)
 	}
-	w.size += int64(n)
-	return n, e
 }
 
-func (w *responseWriter) WriteHeader(statusCode int) {
-	w.ResponseWriter.WriteHeader(statusCode)
-	w.resp.StatusCode = statusCode
+func (w *responseWriter) WriteHeaderNow() {
+	if !w.Written() {
+		w.size = 0
+		w.WriteHeader(w.status)
+	}
 }
 
+func (w *responseWriter) WriteString(s string) (n int, err error) {
+	w.WriteHeaderNow()
+	n, err = io.WriteString(w.ResponseWriter, s)
+	w.size += n
+	return
+}
+
+func (w *responseWriter) Status() int {
+	return w.status
+}
+
+func (w *responseWriter) Size() int {
+	return w.size
+}
+
+func (w *responseWriter) Written() bool {
+	return w.size != noWritten
+}
+
+// Hijack implements the http.Hijacker interface.
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if w.size < 0 {
+		w.size = 0
+	}
+	return w.ResponseWriter.(http.Hijacker).Hijack()
+}
+
+// CloseNotify implements the http.CloseNotify interface.
 func (w *responseWriter) CloseNotify() <-chan bool {
-	if closeNotifier, ok := w.ResponseWriter.(http.CloseNotifier); ok {
-		return closeNotifier.CloseNotify()
+	return w.ResponseWriter.(http.CloseNotifier).CloseNotify()
+}
+
+// Flush implements the http.Flush interface.
+func (w *responseWriter) Flush() {
+	w.WriteHeaderNow()
+	w.ResponseWriter.(http.Flusher).Flush()
+}
+
+func (w *responseWriter) Pusher() (pusher http.Pusher) {
+	if pusher, ok := w.ResponseWriter.(http.Pusher); ok {
+		return pusher
 	}
 	return nil
 }
 
-func (w *responseWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
-}
-
-func wrapResponseWriter(w http.ResponseWriter) (*responseWriter, *Response) {
-	rw := responseWriter{
+func wrapResponseWriter(w http.ResponseWriter) ResponseWriter {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	rw := &responseWriter{
 		ResponseWriter: w,
-		resp: Response{
-			Header: w.Header(),
-		},
+		status:         http.StatusOK,
+		size:           noWritten,
 	}
-	return &rw, &rw.resp
+	return rw
 }

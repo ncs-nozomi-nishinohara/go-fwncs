@@ -18,5 +18,11 @@
     ],
     "go.testFlags": [
         "-v",
+    ],
+    "cSpell.words": [
+        "fwncs",
+        "jwks",
+        "test",
+        "url"
     ]
 }

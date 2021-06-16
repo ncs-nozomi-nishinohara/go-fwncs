@@ -1,0 +1,35 @@
+name: Checks
+on: [pull_request, workflow_dispatch]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: setup
+        uses: actions/setup-go@v2
+        with:
+          go-version: ^1.16
+
+      - name: Cache
+        uses: actions/cache@v2.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: generate ssl
+        run: openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout tests/server.key -out tests/server.crt -subj "/C=JP/ST=Nara/L=Nara/O=n-creativesystem.com/CN=localhost"
+
+      - name: test
+        run: |
+          go get -v
+          go test .
+
+      - name: benchmark
+        run: |
+          go test -bench=.
