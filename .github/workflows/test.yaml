@@ -22,6 +22,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: generate ssl
+        run: openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout tests/server.key -out tests/server.crt -subj "/C=JP/ST=Nara/L=Nara/O=n-creativesystem.com/CN=localhost"
+
       - name: test
         run: |
           go get -v
