@@ -1,69 +1,141 @@
 package fwncs
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/julienschmidt/httprouter"
+	"github.com/n-creativesystem/go-fwncs/constant"
+	"github.com/n-creativesystem/go-fwncs/render"
 )
 
 type Context interface {
-	Writer() http.ResponseWriter
+	/*
+		ResponceWriter
+	*/
+
+	Writer() ResponseWriter
+	SetWriter(w ResponseWriter)
+	GetStatus() int
+	SetStatus(status int)
+	ResponseSize() int
+	SetHeader(key, value string)
+
+	/*
+		Request
+	*/
 	Request() *http.Request
+	SetRequest(r *http.Request)
 	Header() http.Header
-	Logger() ILogger
-	JSON(status int, v interface{}) error
-	Params() httprouter.Params
-	ClientIP() string
-	Start()
-	End()
+	GetContext() context.Context
+	SetContext(ctx context.Context)
+	IsWebSocket() bool
+	Scheme() string
+
+	/*
+		Abort or error
+	*/
 	Abort()
 	AbortWithStatus(status int)
-	AbortWithStatusAndMessage(status int, v interface{}) error
+	AbortWithStatusAndErrorMessage(status int, err error)
+	AbortWithStatusAndMessage(status int, v interface{})
+	IsAbort() bool
+	Error(err error)
+	GetError() []error
+
+	/*
+		Query or URL parameter
+	*/
+	Param(name string) string
+	Params() httprouter.Params
+	QueryParam(name string) string
+	DefaultQuery(name string, defaultValue string) string
+
+	/*
+		Request body
+	*/
+	ReadJsonBody(v interface{}) error
+	FormValue(name string) string
+	FormFile(name string) (*multipart.FileHeader, error)
+	MultiPartForm() (*multipart.Form, error)
+
+	/*
+		Cookie
+	*/
+	Cookie(name string) (*http.Cookie, error)
+	Cookies() []*http.Cookie
+
+	/*
+		Response body
+	*/
+	Render(status int, r render.Render)
+	String(status int, format string, v ...interface{})
+	JSON(status int, v interface{})
+	JSONP(status int, v interface{})
+	IndentJSON(status int, v interface{}, indent string)
+	AsciiJSON(status int, v interface{})
+	YAML(status int, v interface{})
+
+	/*
+		Middlewere or handler
+	*/
 	Next()
-	SetStatus(status int)
-	GetStatus() int
-	ResponseSize() int64
+	HandlerName() string
+	Logger() ILogger
+	ClientIP() string
 	Set(key string, value interface{})
-	Get(key string) (value interface{}, exists bool)
-	JSONBody(v interface{}) error
+	Get(key string) interface{}
+	Redirect(status int, url string)
+
+	/*
+		Utils
+	*/
+	// HttpClient when the tr is nil, the default transport is http.DefaultTransport
+	HttpClient(tr http.RoundTripper) *http.Client
 }
 
 type _context struct {
-	mu          sync.Mutex
-	w           *responseWriter
-	req         *http.Request
-	res         *Response
-	params      httprouter.Params
-	logger      ILogger
-	requestInfo *requestInfo
-	abort       bool
-	handler     []HandlerFunc
-	index       int
-	mp          map[string]interface{}
+	router  *Router
+	w       ResponseWriter
+	req     *http.Request
+	params  httprouter.Params
+	logger  ILogger
+	abort   bool
+	handler HandlerFuncChain
+	index   int
+	mp      map[string]interface{}
+	errs    []error
+	mu      sync.Mutex
+	query   url.Values
 }
 
 var _ Context = &_context{}
 
-func newContext(w http.ResponseWriter, r *http.Request) *_context {
-	rw, res := wrapResponseWriter(w)
-	return &_context{
-		w:     rw,
-		req:   r,
-		res:   res,
-		abort: false,
-		index: -1,
-		mu:    sync.Mutex{},
-	}
+func (c *_context) reset(w http.ResponseWriter, r *http.Request) {
+	c.w = wrapResponseWriter(w)
+	c.req = r
+	c.params = httprouter.Params{}
+	c.abort = false
+	c.handler = HandlerFuncChain{}
+	c.index = -1
+	c.mp = map[string]interface{}{}
+	c.errs = []error{}
+	c.mu = sync.Mutex{}
+	c.query = r.URL.Query()
 }
 
-func (c *_context) Writer() http.ResponseWriter {
+func (c *_context) Writer() ResponseWriter {
 	return c.w
+}
+
+func (c *_context) SetWriter(w ResponseWriter) {
+	c.w = w
 }
 
 func (c *_context) Request() *http.Request {
@@ -78,11 +150,8 @@ func (c *_context) Logger() ILogger {
 	return c.logger
 }
 
-func (c *_context) JSON(status int, v interface{}) error {
-	c.w.Header().Set("X-Content-Type-Options", "nosniff")
-	c.w.Header().Set(MIMEJSON.Get())
-	c.SetStatus(status)
-	return json.NewEncoder(c.w).Encode(v)
+func (c *_context) Param(name string) string {
+	return c.params.ByName(name)
 }
 
 func (c *_context) Params() httprouter.Params {
@@ -90,10 +159,10 @@ func (c *_context) Params() httprouter.Params {
 }
 
 func (c *_context) ClientIP() string {
-	clientIP := c.Header().Get("X-Forwarded-For")
+	clientIP := c.Header().Get(constant.HeaderXForwardedFor)
 	clientIP = strings.TrimSpace(strings.Split(clientIP, ",")[0])
 	if clientIP == "" {
-		clientIP = strings.TrimSpace(c.Header().Get("X-Real-IP"))
+		clientIP = strings.TrimSpace(c.Header().Get(constant.HeaderXRealIP))
 	}
 	if clientIP != "" {
 		return clientIP
@@ -105,68 +174,61 @@ func (c *_context) ClientIP() string {
 	return ""
 }
 
-type requestInfo struct {
-	StartTime     time.Time
-	Path          string
-	RawQuery      string
-	Method        string
-	RemoteAddress string
-	EndTime       time.Time
-}
-
-func (i *requestInfo) GetLatency() time.Duration {
-	return i.EndTime.Sub(i.StartTime)
-}
-
-func (i *requestInfo) GetPath() string {
-	if i.RawQuery != "" {
-		return i.Path + "?" + i.RawQuery
-	}
-	return i.Path
-}
-
-func (c *_context) Start() {
-	c.requestInfo = &requestInfo{
-		StartTime:     time.Now(),
-		Path:          c.req.URL.Path,
-		RawQuery:      c.req.URL.RawQuery,
-		Method:        c.req.Method,
-		RemoteAddress: c.ClientIP(),
-	}
-}
-
-func (c *_context) End() {
-	info := c.requestInfo
-	info.EndTime = time.Now()
-	// 時間 ステータスコード レイテンシー IPアドレス HTTPメソッド パス
-	timeFormat := "2006/01/02 15:04:05"
-	s := fmt.Sprintf(
-		"code:%d\tstart:%v\tend:%v\tlatency:%v\tip:%s\tmethod:%s\tpath:%s\n",
-		c.w.resp.StatusCode,
-		info.StartTime.Format(timeFormat),
-		info.EndTime.Format(timeFormat),
-		info.GetLatency(),
-		info.RemoteAddress,
-		info.Method,
-		info.GetPath(),
-	)
-	c.logger.Info(s)
-}
-
 func (c *_context) Abort() {
 	c.abort = true
 }
 
 func (c *_context) AbortWithStatus(status int) {
-	c.abort = true
-	c.w.WriteHeader(status)
+	if !c.IsAbort() {
+		c.abort = true
+		c.w.WriteHeader(status)
+	}
+}
+
+func (c *_context) AbortWithStatusAndMessage(status int, v interface{}) {
+	if !c.IsAbort() {
+		c.Abort()
+		c.JSON(status, v)
+	}
+}
+
+func (c *_context) AbortWithStatusAndErrorMessage(status int, err error) {
+	if !c.IsAbort() {
+		c.Abort()
+		type errorBody struct {
+			Status   int    `json:"status"`
+			Message  string `json:"message"`
+			Describe string `json:"message_describe"`
+		}
+		e := &errorBody{
+			Status:   status,
+			Message:  "error",
+			Describe: err.Error(),
+		}
+		c.JSON(status, e)
+	}
+}
+
+func (c *_context) IsAbort() bool {
+	return c.abort
 }
 
 func (c *_context) Next() {
+	lastIndex := c.handler.LastIndex()
 	c.index++
 	for c.index < len(c.handler) {
 		if !c.abort {
-			c.handler[c.index](c)
+			handler := c.handler[c.index]
+			var key = "Middleware"
+			if c.index == lastIndex {
+				key = "Handler"
+			}
+			name := NameOfFunction(handler)
+			sp := CreateChildSpan(c.GetContext(), name)
+			defer sp.Finish()
+			sp.SetBaggageItem(key, name)
+			sp.SetTag(key, name)
+			handler(c)
 			c.index++
 		} else {
 			break
@@ -179,30 +241,173 @@ func (c *_context) SetStatus(status int) {
 }
 
 func (c *_context) GetStatus() int {
-	return c.w.resp.StatusCode
+	return c.w.Status()
 }
 
-func (c *_context) ResponseSize() int64 {
-	return c.w.size
+func (c *_context) ResponseSize() int {
+	return c.w.Size()
 }
 
 func (c *_context) Set(key string, value interface{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.mp == nil {
+		c.mp = make(map[string]interface{})
+	}
 	c.mp[key] = value
 }
-func (c *_context) Get(key string) (value interface{}, exists bool) {
+
+func (c *_context) Get(key string) interface{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	value, exists = c.mp[key]
-	return
+	return c.mp[key]
 }
 
-func (c *_context) JSONBody(v interface{}) error {
+func (c *_context) ReadJsonBody(v interface{}) error {
 	return json.NewDecoder(c.req.Body).Decode(v)
 }
 
-func (c *_context) AbortWithStatusAndMessage(status int, v interface{}) error {
-	c.Abort()
-	return c.JSON(status, v)
+func (c *_context) GetContext() context.Context {
+	return c.Request().Context()
+}
+
+func (c *_context) SetContext(ctx context.Context) {
+	*c.req = *c.req.WithContext(ctx)
+}
+
+func (c *_context) Redirect(status int, url string) {
+	c.Render(-1, render.Redirect{Status: status, Location: url, Request: c.req})
+}
+
+func (c *_context) SetHeader(key, value string) {
+	c.Writer().Header().Set(key, value)
+}
+
+func (c *_context) HandlerName() string {
+	return NameOfFunction(c.handler.Last())
+}
+
+func (c *_context) SetRequest(r *http.Request) {
+	*c.req = *r
+}
+
+func (c *_context) Error(err error) {
+	c.errs = append(c.errs, err)
+}
+
+func (c *_context) GetError() []error {
+	return c.errs
+}
+
+func (c *_context) QueryParam(name string) string {
+	if c.query == nil {
+		c.query = c.req.URL.Query()
+	}
+	return c.query.Get(name)
+}
+
+func (c *_context) DefaultQuery(name string, defaultValue string) string {
+	if v := c.QueryParam(name); v != "" {
+		return v
+	}
+	return defaultValue
+}
+
+func (c *_context) FormValue(name string) string {
+	return c.req.FormValue(name)
+}
+
+func (c *_context) Cookie(name string) (*http.Cookie, error) {
+	return c.req.Cookie(name)
+}
+
+func (c *_context) Cookies() []*http.Cookie {
+	return c.req.Cookies()
+}
+
+func (c *_context) FormFile(name string) (*multipart.FileHeader, error) {
+	f, fh, err := c.req.FormFile(name)
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	return fh, nil
+}
+
+func (c *_context) MultiPartForm() (*multipart.Form, error) {
+	err := c.req.ParseMultipartForm(defaultMemory)
+	return c.req.MultipartForm, err
+}
+
+// HttpClient when the tr is nil, the default transport is http.DefaultTransport
+func (c *_context) HttpClient(tr http.RoundTripper) *http.Client {
+	client := http.DefaultClient
+	client.Transport = RequestIDTransport(c.GetContext(), tr)
+	return client
+}
+
+func (c *_context) Render(status int, r render.Render) {
+	w := c.Writer()
+	c.SetStatus(status)
+	if !bodyAllowedForStatus(status) {
+		r.WriteContentType(w)
+		w.WriteHeaderNow()
+		return
+	}
+	if err := r.Render(w); err != nil {
+		panic(err)
+	}
+}
+
+func (c *_context) JSON(status int, v interface{}) {
+	c.Render(status, render.JSON{Data: v})
+}
+
+func (c *_context) JSONP(status int, v interface{}) {
+	callback := c.DefaultQuery("callback", "")
+	if callback == "" {
+		c.JSON(status, v)
+	} else {
+		c.Render(status, render.JSONP{Data: v, Callback: callback})
+	}
+}
+
+func (c *_context) IndentJSON(status int, v interface{}, indent string) {
+	c.Render(status, render.IndentJSON{Data: v, Indent: indent})
+}
+
+func (c *_context) AsciiJSON(status int, v interface{}) {
+	c.Render(status, render.AsciiJSON{Data: v})
+}
+
+func (c *_context) String(status int, format string, v ...interface{}) {
+	c.Render(status, render.Text{Format: format, Data: v})
+}
+
+func (c *_context) YAML(status int, v interface{}) {
+	c.Render(status, render.YAML{Data: v})
+}
+
+func (c *_context) IsWebSocket() bool {
+	upgrade := c.Header().Get(constant.HeaderUpgrade)
+	return strings.EqualFold(upgrade, "websocket")
+}
+
+func (c *_context) Scheme() string {
+	if c.req.TLS != nil {
+		return "https"
+	}
+	if scheme := c.req.Header.Get(constant.HeaderXForwardedProto); scheme != "" {
+		return scheme
+	}
+	if scheme := c.req.Header.Get(constant.HeaderXForwardedProtocol); scheme != "" {
+		return scheme
+	}
+	if ssl := c.req.Header.Get(constant.HeaderXForwardedSsl); ssl == "on" {
+		return "https"
+	}
+	if scheme := c.req.Header.Get(constant.HeaderXUrlScheme); scheme != "" {
+		return scheme
+	}
+	return "http"
 }

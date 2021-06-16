@@ -9,6 +9,13 @@ services:
       - ~/.gitconfig:/root/.gitconfig
     networks:
       - go-router-net
+  jaeger:
+    image: jaegertracing/all-in-one
+    ports:
+      - 16686:16686
+    container_name: jaeger
+    networks:
+      - go-router-net
 networks:
   default:
     name: bridge
