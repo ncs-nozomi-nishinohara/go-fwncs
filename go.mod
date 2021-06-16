@@ -7,7 +7,7 @@ require (
 	github.com/coreos/go-oidc v2.2.1+incompatible
 	github.com/form3tech-oss/jwt-go v3.2.3+incompatible
 	github.com/julienschmidt/httprouter v1.3.0
-	github.com/newrelic/go-agent/v3 v3.0.0
+	github.com/newrelic/go-agent/v3 v3.13.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/pquerna/cachecontrol v0.1.0 // indirect
 	github.com/prometheus/client_golang v1.11.0
