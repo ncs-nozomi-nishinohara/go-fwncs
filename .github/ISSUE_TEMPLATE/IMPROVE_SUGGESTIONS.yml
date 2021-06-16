@@ -1,0 +1,31 @@
+name: 改善提案 / improvement Suggestions
+description: 「こうするともっとよくなる」と言った提案 / Suggestions that say, "This will make it better."
+labels: improvement
+
+body:
+  - type: textarea
+    attributes:
+      label: 改善詳細/Details of Improvement
+      description: >-
+        出来るだけ明確で簡潔な説明を記載して下さい。
+        (Provide as clear and concise an explanation as possible.)
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: 期待する動作・挙動/Expected behavior
+      description: >-
+        どの様に期待している動作かを明確で簡潔な説明を記載して下さい。
+        (Please provide a clear and concise description of how you expect it to work.)
+
+  - type: input
+    attributes:
+      label: Golang version
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: OS
+    validations:
+      required: true
