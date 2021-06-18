@@ -6,6 +6,7 @@ require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.0 // indirect
 	github.com/coreos/go-oidc v2.2.1+incompatible
 	github.com/form3tech-oss/jwt-go v3.2.3+incompatible
+	github.com/go-playground/validator/v10 v10.6.1
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/newrelic/go-agent/v3 v3.0.0
 	github.com/opentracing/opentracing-go v1.2.0

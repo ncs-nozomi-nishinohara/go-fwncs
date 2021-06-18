@@ -12,7 +12,7 @@ type (
 		http.ResponseWriter
 		http.Hijacker
 		http.Flusher
-		http.CloseNotifier
+		// http.CloseNotifier
 
 		Status() int
 		Size() int
@@ -38,13 +38,15 @@ func (w *responseWriter) Write(buf []byte) (n int, err error) {
 	w.size += n
 	return
 }
+
 func (w *responseWriter) WriteHeader(code int) {
 	if code > 0 && w.status != code {
 		if w.Written() {
 			w.log.Debug("[WARNING] Headers were already written. Wanted to override status code %d with %d", w.status, code)
+		} else {
+			w.status = code
+			w.ResponseWriter.WriteHeader(code)
 		}
-		w.status = code
-		w.ResponseWriter.WriteHeader(code)
 	}
 }
 
@@ -82,11 +84,6 @@ func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.(http.Hijacker).Hijack()
 }
 
-// CloseNotify implements the http.CloseNotify interface.
-func (w *responseWriter) CloseNotify() <-chan bool {
-	return w.ResponseWriter.(http.CloseNotifier).CloseNotify()
-}
-
 // Flush implements the http.Flush interface.
 func (w *responseWriter) Flush() {
 	w.WriteHeaderNow()
@@ -100,12 +97,29 @@ func (w *responseWriter) Pusher() (pusher http.Pusher) {
 	return nil
 }
 
-func wrapResponseWriter(w http.ResponseWriter) ResponseWriter {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+type closeNotifyResponseWriter struct {
+	*responseWriter
+	closeNotifier http.CloseNotifier
+}
+
+// CloseNotify implements the http.CloseNotify interface.
+func (w *closeNotifyResponseWriter) CloseNotify() <-chan bool {
+	return w.closeNotifier.CloseNotify()
+}
+
+func wrapResponseWriter(w http.ResponseWriter, log ILogger) ResponseWriter {
 	rw := &responseWriter{
 		ResponseWriter: w,
 		status:         http.StatusOK,
 		size:           noWritten,
+		log:            log,
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if crw, ok := w.(http.CloseNotifier); ok {
+		return &closeNotifyResponseWriter{
+			responseWriter: rw,
+			closeNotifier:  crw,
+		}
 	}
 	return rw
 }

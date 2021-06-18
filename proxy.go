@@ -27,32 +27,38 @@ type ProxyTarget struct {
 }
 
 type ProxyBalancer interface {
-	Add(p *ProxyTarget) bool
+	Add(target interface{}) bool
 	Remove(name string) bool
 	Next(c Context) *ProxyTarget
 }
-
 type commonBalancer struct {
 	target []*ProxyTarget
 	mu     sync.RWMutex
 }
 
-func (b *commonBalancer) Add(p *ProxyTarget) bool {
+func (b *commonBalancer) Add(p interface{}) bool {
+	var proxy *ProxyTarget
+	if v, ok := p.(*ProxyTarget); !ok {
+		return false
+	} else {
+		proxy = v
+	}
 	for _, t := range b.target {
-		if t.Name == p.Name {
+		if t.Name == proxy.Name {
 			return false
 		}
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.target = append(b.target, p)
+	b.target = append(b.target, proxy)
 	return true
 }
 
 func (b *commonBalancer) Remove(name string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for i, t := range b.target {
+	target := b.target
+	for i, t := range target {
 		if t.Name == name {
 			b.target = append(b.target[:i], b.target[i+1:]...)
 			return true
@@ -90,6 +96,8 @@ type roundRobinBalancer struct {
 }
 
 func (b *roundRobinBalancer) Next(c Context) *ProxyTarget {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	b.i = b.i % uint32(len(b.target))
 	t := b.target[b.i]
 	atomic.AddUint32(&b.i, 1)
@@ -101,6 +109,70 @@ func NewRoundRobinBalancer(proxies []*ProxyTarget) ProxyBalancer {
 		commonBalancer: new(commonBalancer),
 	}
 	b.target = proxies
+	return b
+}
+
+type WeightProxyTarget struct {
+	Weight float64
+	*ProxyTarget
+}
+type staticRoundRobinBalancer struct {
+	choices Choices
+	mu      sync.RWMutex
+}
+
+func (b *staticRoundRobinBalancer) Next(c Context) *ProxyTarget {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	choice := b.choices.GetOne()
+	return choice.Item.(*WeightProxyTarget).ProxyTarget
+}
+
+func (b *staticRoundRobinBalancer) Add(p interface{}) bool {
+	var proxy *WeightProxyTarget
+	if v, ok := p.(*WeightProxyTarget); !ok {
+		return false
+	} else {
+		proxy = v
+	}
+	for _, choice := range b.choices {
+		t := choice.Item.(*WeightProxyTarget)
+		if t.Name == proxy.Name {
+			return false
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.choices = append(b.choices, Choice{
+		Weight: proxy.Weight,
+		Item:   proxy,
+	})
+	return true
+
+}
+
+func (b *staticRoundRobinBalancer) Remove(name string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, choice := range b.choices {
+		t := choice.Item.(*WeightProxyTarget)
+		if t.Name == name {
+			b.choices = append(b.choices[:i], b.choices[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func NewStaticWeightedRoundRobinBalancer(proxies []*WeightProxyTarget) ProxyBalancer {
+	b := &staticRoundRobinBalancer{}
+	b.choices = make([]Choice, len(proxies))
+	for idx, proxy := range proxies {
+		b.choices[idx] = Choice{
+			Weight: proxy.Weight,
+			Item:   proxy.ProxyTarget,
+		}
+	}
 	return b
 }
 
@@ -165,6 +237,7 @@ func ProxyWithConfig(config ProxyConfig) HandlerFunc {
 				c.AbortWithStatusAndErrorMessage(v.Code, v)
 			}
 		}
+		c.Skip()
 	}
 }
 
@@ -208,12 +281,12 @@ func proxyRaw(t *ProxyTarget, c Context) http.Handler {
 
 const StatusCodeContextCanceled = 499
 
-func proxyHTTP(tgt *ProxyTarget, c Context, config ProxyConfig) http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(tgt.URL)
+func proxyHTTP(t *ProxyTarget, c Context, config ProxyConfig) http.Handler {
+	proxy := httputil.NewSingleHostReverseProxy(t.URL)
 	proxy.ErrorHandler = func(resp http.ResponseWriter, req *http.Request, err error) {
-		desc := tgt.URL.String()
-		if tgt.Name != "" {
-			desc = fmt.Sprintf("%s(%s)", tgt.Name, tgt.URL.String())
+		desc := t.URL.String()
+		if t.Name != "" {
+			desc = fmt.Sprintf("%s(%s)", t.Name, t.URL.String())
 		}
 		if err == context.Canceled || strings.Contains(err.Error(), "operation was canceled") {
 			httpError := NewDefaultResponseBody(StatusCodeContextCanceled, fmt.Sprintf("client closed connection: %v", err))

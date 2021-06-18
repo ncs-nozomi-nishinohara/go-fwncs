@@ -27,4 +27,5 @@ var (
 	_ Render = JSONP{}
 	_ Render = IndentJSON{}
 	_ Render = Redirect{}
+	_ Render = TemplateRender{}
 )
