@@ -54,7 +54,7 @@ func Permission(permissionClaim string, permissions ...string) HandlerFunc {
 		if mpPermission.IsDenied() {
 			c.AbortWithStatus(http.StatusForbidden)
 		}
-		if !c.IsAbort() {
+		if !c.IsSkip() {
 			c.Next()
 		} else {
 			c.SetHeader("WWW-Authenticate", "Bearer error=\"insufficient_scope\"")

@@ -64,14 +64,14 @@ func TestDefaultRouter(t *testing.T) {
 			Fn: func(t *testing.T) {
 				signature := ""
 				route := fwncs.Default()
-				route.GET("", func(c fwncs.Context) {
-					signature += "A"
-					c.JSON(200, map[string]string{"test": "OK"})
-				})
 				route.Use(func(c fwncs.Context) {
 					signature += "B"
 					c.Next()
 					signature += "C"
+				})
+				route.GET("", func(c fwncs.Context) {
+					signature += "A"
+					c.JSON(200, map[string]string{"test": "OK"})
 				})
 				req := httptest.NewRequest(http.MethodGet, "/", nil)
 				rw := httptest.NewRecorder()
@@ -242,4 +242,33 @@ func TestRunTLS(t *testing.T) {
 	resp, err := client.Do(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestMiddleware(t *testing.T) {
+	test := ""
+	router := fwncs.Default()
+	router.Use(func(c fwncs.Context) {
+		test += "a"
+	})
+	router.GET("/", func(c fwncs.Context) {
+		test += "b"
+	})
+	router.Use(func(c fwncs.Context) {
+		test += "c"
+	})
+	router.GET("/test", func(c fwncs.Context) {
+		test += "d"
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	w.Result().Body.Close()
+	assert.Equal(t, "ab", test)
+	test = ""
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	w.Result().Body.Close()
+	assert.Equal(t, "acd", test)
 }

@@ -60,6 +60,7 @@ type Router struct {
 	routes  map[string][]routerInfo
 	pool    *sync.Pool
 	tracing TraceHandler
+	usePool *sync.Pool
 }
 
 // var _ IRouter = &Router{}
@@ -80,7 +81,6 @@ func New(opts ...Options) *Router {
 		builder.logger = DefaultLogger
 	}
 	r := httprouter.New()
-	r.NotFound = NotFound()
 	r.MethodNotAllowed = MethodNotAllowed()
 	router := &Router{
 		Router: r,
@@ -92,10 +92,21 @@ func New(opts ...Options) *Router {
 		New: func() interface{} {
 			return &_context{
 				router: router,
-				abort:  false,
+				skip:   false,
 				index:  -1,
 				mu:     sync.Mutex{},
+				logger: router.logger,
 			}
+		},
+	}
+	router.usePool = &sync.Pool{
+		New: func() interface{} {
+			cpHandler := make(HandlerFuncChain, len(router.use)+1)
+			copy(cpHandler, router.use)
+			cpHandler[len(cpHandler)-1] = func(c Context) {
+				c.JSON(http.StatusNotFound, NewDefaultResponseBody(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
+			}
+			return cpHandler
 		},
 	}
 	if len(builder.elastic) > 0 {
@@ -114,8 +125,22 @@ func New(opts ...Options) *Router {
 		router.Use(InstrumentHandlerInFlight, InstrumentHandlerDuration, InstrumentHandlerCounter, InstrumentHandlerResponseSize)
 		router.GET("/metrics", WrapHandler(promhttp.Handler()))
 	}
-
+	router.Router.NotFound = router.httpHandle()
 	return router
+}
+
+func httpRouterHandle(r *Router, h ...HandlerFunc) httprouter.Handle {
+	cpHandler := make(HandlerFuncChain, len(r.use)+len(h))
+	copy(cpHandler, append(r.use, h...))
+	return func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
+		c := r.pool.Get().(*_context)
+		c.reset(w, req)
+		c.logger = r.logger
+		c.params = p
+		c.handler = cpHandler
+		c.Next()
+		r.pool.Put(c)
+	}
 }
 
 func (r *Router) path(relativePath string) string {
@@ -125,27 +150,21 @@ func (r *Router) path(relativePath string) string {
 	return path.Join(r.group, relativePath)
 }
 
-func (r *Router) handle(h ...HandlerFunc) httprouter.Handle {
-	originalHandler := func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
+func (r *Router) httpHandle() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		cpHandler := r.usePool.Get().(HandlerFuncChain)
 		c := r.pool.Get().(*_context)
 		c.reset(w, req)
 		c.logger = r.logger
-		c.params = p
-		middlewareLength := len(r.use)
-		handlerLength := len(h)
-		length := middlewareLength + handlerLength
-		c.handler = make(HandlerFuncChain, length)
-		for i := 0; i < length; i++ {
-			if i < middlewareLength {
-				c.handler[i] = r.use[i]
-			} else {
-				c.handler[i] = h[i-middlewareLength]
-			}
-		}
+		c.handler = cpHandler
 		c.Next()
 		r.pool.Put(c)
-	}
-	return originalHandler
+		r.usePool.Put(cpHandler)
+	})
+}
+
+func (r *Router) httpRouterHandle(h ...HandlerFunc) httprouter.Handle {
+	return httpRouterHandle(r, h...)
 }
 
 func (r *Router) Handler(method, path string, h ...HandlerFunc) {
@@ -161,7 +180,7 @@ func (r *Router) Handler(method, path string, h ...HandlerFunc) {
 		handler:     lastHandler,
 	})
 	r.routes[method] = info
-	handle := r.handle(h...)
+	handle := r.httpRouterHandle(h...)
 	r.Router.Handle(r.tracing(method, r.path(path), handle))
 }
 
@@ -205,11 +224,9 @@ func (r *Router) Use(middleware ...HandlerFunc) {
 	r.use = append(r.use, middleware...)
 }
 
-func (r *Router) Group(path string) *Router {
+func (r *Router) Group(path string, middleware ...HandlerFunc) *Router {
 	u := make([]HandlerFunc, len(r.use))
-	for idx, use := range r.use {
-		u[idx] = use
-	}
+	copy(u, append(r.use, middleware...))
 	return &Router{
 		Router:  r.Router,
 		group:   r.path(path),
