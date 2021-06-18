@@ -1,7 +1,10 @@
 ---
 name: 改善提案 / improvement Suggestions
-description: 「こうするともっとよくなる」と言った提案 / Suggestions that say, "This will make it better."
+about: improvement Suggestions
+title: ''
 labels: improvement
+assignees: ''
+
 ---
 
 ## 改善詳細/Details of Improvement
