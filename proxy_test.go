@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"sync"
 	"testing"
 
 	"github.com/n-creativesystem/go-fwncs"
@@ -142,18 +141,14 @@ func TestStaticWeightingLoadBalancer(t *testing.T) {
 		},
 	}
 
-	t1cnt := 0
 	t1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "target 1")
-		t1cnt++
 	}))
 	defer t1.Close()
 	url1, _ := url.Parse(t1.URL)
 
-	t2cnt := 0
 	t2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "target 2")
-		t2cnt++
 	}))
 	defer t2.Close()
 	url2, _ := url.Parse(t2.URL)
@@ -173,7 +168,6 @@ func TestStaticWeightingLoadBalancer(t *testing.T) {
 			},
 		},
 	}
-
 	swrb := fwncs.NewStaticWeightedRoundRobinBalancer(nil)
 	for _, target := range wTargets {
 		assert.True(t, swrb.Add(target))
@@ -182,36 +176,32 @@ func TestStaticWeightingLoadBalancer(t *testing.T) {
 	for _, target := range targets {
 		assert.False(t, swrb.Add(target))
 	}
-	waitGroup := sync.WaitGroup{}
 	router := fwncs.New()
 	router.Use(fwncs.Proxy(swrb))
-	for i := 0; i < 10; i++ {
-		waitGroup.Add(1)
-		go func() {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, req)
-			waitGroup.Done()
-		}()
+	expected := map[string]bool{
+		"target 1": true,
+		"target 2": true,
 	}
-	waitGroup.Wait()
-	assert.Equal(t, 5, t1cnt)
-	assert.Equal(t, 5, t2cnt)
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		assert.Condition(t, func() bool {
+			return expected[body]
+		})
+	}
 }
 
 func TestStaticWeightingLoadBalancer2(t *testing.T) {
-	t1cnt := 0
 	t1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "target 1")
-		t1cnt++
 	}))
 	defer t1.Close()
 	url1, _ := url.Parse(t1.URL)
 
-	t2cnt := 0
 	t2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "target 2")
-		t2cnt++
 	}))
 	defer t2.Close()
 	url2, _ := url.Parse(t2.URL)
@@ -236,21 +226,21 @@ func TestStaticWeightingLoadBalancer2(t *testing.T) {
 	for _, target := range wTargets {
 		assert.True(t, swrb.Add(target))
 	}
-	waitGroup := sync.WaitGroup{}
 	router := fwncs.New()
 	router.Use(fwncs.Proxy(swrb))
-	for i := 0; i < 10; i++ {
-		waitGroup.Add(1)
-		go func() {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, req)
-			waitGroup.Done()
-		}()
+	expected := map[string]bool{
+		"target 1": true,
+		"target 2": true,
 	}
-	waitGroup.Wait()
-	assert.Equal(t, 10, t1cnt)
-	assert.Equal(t, 0, t2cnt)
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		assert.Condition(t, func() bool {
+			return expected[body]
+		})
+	}
 }
 
 func TestStaticWeightingLoadBalancer3(t *testing.T) {
@@ -300,7 +290,6 @@ func TestStaticWeightingLoadBalancer3(t *testing.T) {
 	for _, target := range wTargets {
 		assert.True(t, swrb.Add(target))
 	}
-	waitGroup := sync.WaitGroup{}
 	router := fwncs.New()
 	router.Use(fwncs.Proxy(swrb))
 	expected := map[string]bool{
@@ -317,5 +306,4 @@ func TestStaticWeightingLoadBalancer3(t *testing.T) {
 			return expected[body]
 		})
 	}
-	waitGroup.Wait()
 }
