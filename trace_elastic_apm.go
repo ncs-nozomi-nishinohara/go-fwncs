@@ -38,7 +38,7 @@ func Elastic(r *Router, opts ...ElasticOption) TraceHandler {
 
 func (m *elasticMiddleware) handler(method, path string, h httprouter.Handle) (string, string, httprouter.Handle) {
 	return method, path, func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
-		w = wrapResponseWriter(w)
+		w = wrapResponseWriter(w, m.router.logger)
 		if !m.tracer.Recording() || m.requestIgnore(req) {
 			return
 		}

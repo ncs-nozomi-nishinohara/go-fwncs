@@ -221,7 +221,7 @@ func Auth(opt AuthOption) HandlerFunc {
 				c.AbortWithStatus(http.StatusUnauthorized)
 			}
 		}
-		if !c.IsAbort() {
+		if !c.IsSkip() {
 			c.Set(AuthKey, token)
 			c.Next()
 		} else {

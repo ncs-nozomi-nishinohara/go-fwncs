@@ -3,6 +3,7 @@ package fwncs
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -41,13 +42,14 @@ type Context interface {
 	/*
 		Abort or error
 	*/
-	Abort()
 	AbortWithStatus(status int)
 	AbortWithStatusAndErrorMessage(status int, err error)
 	AbortWithStatusAndMessage(status int, v interface{})
-	IsAbort() bool
 	Error(err error)
 	GetError() []error
+	// Skip is 後続の処理を止める
+	IsSkip() bool
+	Skip()
 
 	/*
 		Query or URL parameter
@@ -81,6 +83,7 @@ type Context interface {
 	IndentJSON(status int, v interface{}, indent string)
 	AsciiJSON(status int, v interface{})
 	YAML(status int, v interface{})
+	Template(status int, v interface{}, filenames ...string)
 
 	/*
 		Middlewere or handler
@@ -106,7 +109,7 @@ type _context struct {
 	req     *http.Request
 	params  httprouter.Params
 	logger  ILogger
-	abort   bool
+	skip    bool
 	handler HandlerFuncChain
 	index   int
 	mp      map[string]interface{}
@@ -118,10 +121,10 @@ type _context struct {
 var _ Context = &_context{}
 
 func (c *_context) reset(w http.ResponseWriter, r *http.Request) {
-	c.w = wrapResponseWriter(w)
+	c.w = wrapResponseWriter(w, c.logger)
 	c.req = r
 	c.params = httprouter.Params{}
-	c.abort = false
+	c.skip = false
 	c.handler = HandlerFuncChain{}
 	c.index = -1
 	c.mp = map[string]interface{}{}
@@ -138,16 +141,104 @@ func (c *_context) SetWriter(w ResponseWriter) {
 	c.w = w
 }
 
+func (c *_context) GetStatus() int {
+	return c.w.Status()
+}
+
+func (c *_context) SetStatus(status int) {
+	c.w.WriteHeader(status)
+}
+
+func (c *_context) ResponseSize() int {
+	return c.w.Size()
+}
+
+func (c *_context) SetHeader(key, value string) {
+	c.Writer().Header().Set(key, value)
+}
+
 func (c *_context) Request() *http.Request {
 	return c.req
+}
+
+func (c *_context) SetRequest(r *http.Request) {
+	*c.req = *r
 }
 
 func (c *_context) Header() http.Header {
 	return c.req.Header
 }
 
-func (c *_context) Logger() ILogger {
-	return c.logger
+func (c *_context) GetContext() context.Context {
+	return c.Request().Context()
+}
+
+func (c *_context) SetContext(ctx context.Context) {
+	*c.req = *c.req.WithContext(ctx)
+}
+
+func (c *_context) IsWebSocket() bool {
+	upgrade := c.Header().Get(constant.HeaderUpgrade)
+	return strings.EqualFold(upgrade, "websocket")
+}
+
+func (c *_context) Scheme() string {
+	if c.req.TLS != nil {
+		return "https"
+	}
+	if scheme := c.req.Header.Get(constant.HeaderXForwardedProto); scheme != "" {
+		return scheme
+	}
+	if scheme := c.req.Header.Get(constant.HeaderXForwardedProtocol); scheme != "" {
+		return scheme
+	}
+	if ssl := c.req.Header.Get(constant.HeaderXForwardedSsl); ssl == "on" {
+		return "https"
+	}
+	if scheme := c.req.Header.Get(constant.HeaderXUrlScheme); scheme != "" {
+		return scheme
+	}
+	return "http"
+}
+
+func (c *_context) AbortWithStatusAndMessage(status int, v interface{}) {
+	if !c.IsSkip() {
+		c.Skip()
+		c.JSON(status, v)
+	}
+}
+
+func (c *_context) AbortWithStatusAndErrorMessage(status int, err error) {
+	if !c.IsSkip() {
+		c.Skip()
+		type errorBody struct {
+			Status   int    `json:"status"`
+			Message  string `json:"message"`
+			Describe string `json:"message_describe"`
+		}
+		e := &errorBody{
+			Status:   status,
+			Message:  "error",
+			Describe: err.Error(),
+		}
+		c.JSON(status, e)
+	}
+}
+
+func (c *_context) Error(err error) {
+	c.errs = append(c.errs, err)
+}
+
+func (c *_context) GetError() []error {
+	return c.errs
+}
+
+func (c *_context) IsSkip() bool {
+	return c.skip
+}
+
+func (c *_context) Skip() {
+	c.skip = true
 }
 
 func (c *_context) Param(name string) string {
@@ -156,6 +247,10 @@ func (c *_context) Param(name string) string {
 
 func (c *_context) Params() httprouter.Params {
 	return c.params
+}
+
+func (c *_context) Logger() ILogger {
+	return c.logger
 }
 
 func (c *_context) ClientIP() string {
@@ -174,50 +269,18 @@ func (c *_context) ClientIP() string {
 	return ""
 }
 
-func (c *_context) Abort() {
-	c.abort = true
-}
-
 func (c *_context) AbortWithStatus(status int) {
-	if !c.IsAbort() {
-		c.abort = true
+	if !c.IsSkip() {
+		c.Skip()
 		c.w.WriteHeader(status)
 	}
-}
-
-func (c *_context) AbortWithStatusAndMessage(status int, v interface{}) {
-	if !c.IsAbort() {
-		c.Abort()
-		c.JSON(status, v)
-	}
-}
-
-func (c *_context) AbortWithStatusAndErrorMessage(status int, err error) {
-	if !c.IsAbort() {
-		c.Abort()
-		type errorBody struct {
-			Status   int    `json:"status"`
-			Message  string `json:"message"`
-			Describe string `json:"message_describe"`
-		}
-		e := &errorBody{
-			Status:   status,
-			Message:  "error",
-			Describe: err.Error(),
-		}
-		c.JSON(status, e)
-	}
-}
-
-func (c *_context) IsAbort() bool {
-	return c.abort
 }
 
 func (c *_context) Next() {
 	lastIndex := c.handler.LastIndex()
 	c.index++
 	for c.index < len(c.handler) {
-		if !c.abort {
+		if !c.skip {
 			handler := c.handler[c.index]
 			var key = "Middleware"
 			if c.index == lastIndex {
@@ -234,18 +297,6 @@ func (c *_context) Next() {
 			break
 		}
 	}
-}
-
-func (c *_context) SetStatus(status int) {
-	c.w.WriteHeader(status)
-}
-
-func (c *_context) GetStatus() int {
-	return c.w.Status()
-}
-
-func (c *_context) ResponseSize() int {
-	return c.w.Size()
 }
 
 func (c *_context) Set(key string, value interface{}) {
@@ -267,36 +318,12 @@ func (c *_context) ReadJsonBody(v interface{}) error {
 	return json.NewDecoder(c.req.Body).Decode(v)
 }
 
-func (c *_context) GetContext() context.Context {
-	return c.Request().Context()
-}
-
-func (c *_context) SetContext(ctx context.Context) {
-	*c.req = *c.req.WithContext(ctx)
-}
-
 func (c *_context) Redirect(status int, url string) {
 	c.Render(-1, render.Redirect{Status: status, Location: url, Request: c.req})
 }
 
-func (c *_context) SetHeader(key, value string) {
-	c.Writer().Header().Set(key, value)
-}
-
 func (c *_context) HandlerName() string {
 	return NameOfFunction(c.handler.Last())
-}
-
-func (c *_context) SetRequest(r *http.Request) {
-	*c.req = *r
-}
-
-func (c *_context) Error(err error) {
-	c.errs = append(c.errs, err)
-}
-
-func (c *_context) GetError() []error {
-	return c.errs
 }
 
 func (c *_context) QueryParam(name string) string {
@@ -388,26 +415,9 @@ func (c *_context) YAML(status int, v interface{}) {
 	c.Render(status, render.YAML{Data: v})
 }
 
-func (c *_context) IsWebSocket() bool {
-	upgrade := c.Header().Get(constant.HeaderUpgrade)
-	return strings.EqualFold(upgrade, "websocket")
-}
-
-func (c *_context) Scheme() string {
-	if c.req.TLS != nil {
-		return "https"
-	}
-	if scheme := c.req.Header.Get(constant.HeaderXForwardedProto); scheme != "" {
-		return scheme
-	}
-	if scheme := c.req.Header.Get(constant.HeaderXForwardedProtocol); scheme != "" {
-		return scheme
-	}
-	if ssl := c.req.Header.Get(constant.HeaderXForwardedSsl); ssl == "on" {
-		return "https"
-	}
-	if scheme := c.req.Header.Get(constant.HeaderXUrlScheme); scheme != "" {
-		return scheme
-	}
-	return "http"
+func (c *_context) Template(status int, v interface{}, filenames ...string) {
+	c.Render(status, render.TemplateRender{
+		Template: template.Must(template.New("html").ParseFiles(filenames...)),
+		Data:     v,
+	})
 }

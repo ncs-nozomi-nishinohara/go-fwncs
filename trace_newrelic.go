@@ -68,7 +68,7 @@ func Newrelic(r *Router, app *newrelic.Application) TraceHandler {
 
 func (m *newrelicMiddleware) handler(method, path string, h httprouter.Handle) (string, string, httprouter.Handle) {
 	return method, path, func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
-		w = wrapResponseWriter(w)
+		w = wrapResponseWriter(w, m.router.logger)
 		if m.app != nil {
 			m.once.Do(func() {
 				m.transactionMap = TransactionNameGenerator(m.router)
