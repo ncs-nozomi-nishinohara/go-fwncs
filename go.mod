@@ -7,11 +7,16 @@ require (
 	github.com/coreos/go-oidc v2.2.1+incompatible
 	github.com/form3tech-oss/jwt-go v3.2.3+incompatible
 	github.com/go-playground/validator/v10 v10.6.1
+	github.com/go-redis/redis v6.15.9+incompatible
+	github.com/go-redis/redis/v8 v8.10.0
+	github.com/gorilla/securecookie v1.1.1
+	github.com/gorilla/sessions v1.2.1
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/newrelic/go-agent/v3 v3.0.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/pquerna/cachecontrol v0.1.0 // indirect
 	github.com/prometheus/client_golang v1.11.0
+	github.com/prometheus/common v0.26.0
 	github.com/stretchr/testify v1.7.0
 	github.com/uber/jaeger-client-go v2.29.1+incompatible
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect

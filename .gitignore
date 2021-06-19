@@ -16,3 +16,4 @@
 .DS_Store
 /tests/server*
 /tests/ssl.sh
+/dump.rdb
