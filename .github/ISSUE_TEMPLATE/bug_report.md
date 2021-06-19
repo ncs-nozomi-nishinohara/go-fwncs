@@ -1,7 +1,10 @@
 ---
 name: バグ報告 / Bug report
-description: 何かに不具合が起きています / Something is not working correctly.
+about: Bug report
+title: ''
 labels: bug
+assignees: ''
+
 ---
 
 ## 起こっている問題 / The Problem
