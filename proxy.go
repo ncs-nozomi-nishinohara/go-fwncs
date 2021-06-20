@@ -170,7 +170,7 @@ func NewStaticWeightedRoundRobinBalancer(proxies []*WeightProxyTarget) ProxyBala
 	for idx, proxy := range proxies {
 		b.choices[idx] = Choice{
 			Weight: proxy.Weight,
-			Item:   proxy.ProxyTarget,
+			Item:   proxy,
 		}
 	}
 	return b
