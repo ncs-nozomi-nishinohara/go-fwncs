@@ -238,7 +238,7 @@ func (s *RedisStore) load(session *gsessions.Session) (bool, error) {
 		return false, err
 	}
 	defer client.Close()
-	result, err := client.Get(context.Background(), s.keyPrefix+session.ID).Result()
+	result, err := client.Get(context.Background(), s.GetSessionName(session)).Result()
 	if err != nil {
 		return false, err
 	}
@@ -251,7 +251,7 @@ func (s *RedisStore) delete(session *gsessions.Session) error {
 		return err
 	}
 	defer client.Close()
-	return client.Del(context.Background(), s.keyPrefix+s.keyPrefix).Err()
+	return client.Del(context.Background(), s.GetSessionName(session)).Err()
 }
 
 func (s *RedisStore) save(session *gsessions.Session) error {
@@ -269,7 +269,11 @@ func (s *RedisStore) save(session *gsessions.Session) error {
 		age = sessionExpire
 	}
 	age = int(time.Second * time.Duration(age))
-	return client.SetEX(context.Background(), s.keyPrefix+session.ID, string(buf), time.Duration(age)).Err()
+	return client.SetEX(context.Background(), s.GetSessionName(session), string(buf), time.Duration(age)).Err()
+}
+
+func (s *RedisStore) GetSessionName(session *gsessions.Session) string {
+	return s.keyPrefix + session.ID
 }
 
 func GetRedisStore(s Store) (err error, rediStore *RedisStore) {
