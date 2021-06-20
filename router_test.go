@@ -272,3 +272,32 @@ func TestMiddleware(t *testing.T) {
 	w.Result().Body.Close()
 	assert.Equal(t, "acd", test)
 }
+
+func TestGroupMiddleware(t *testing.T) {
+	test := ""
+	router := fwncs.Default()
+	router.Use(func(c fwncs.Context) {
+		test += "a"
+	})
+	router.GET("/", func(c fwncs.Context) {
+		test += "b"
+	})
+	group := router.Group("/test", func(c fwncs.Context) {
+		test += "c"
+	})
+	group.GET("/", func(c fwncs.Context) {
+		test += "d"
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	w.Result().Body.Close()
+	assert.Equal(t, "ab", test)
+	test = ""
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	w.Result().Body.Close()
+	assert.Equal(t, "acd", test)
+}
