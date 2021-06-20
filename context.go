@@ -101,6 +101,10 @@ type Context interface {
 	*/
 	// HttpClient when the tr is nil, the default transport is http.DefaultTransport
 	HttpClient(tr http.RoundTripper) *http.Client
+	Path() string
+	RealPath() string
+	Method() string
+	RealMethod() string
 }
 
 type _context struct {
@@ -116,6 +120,8 @@ type _context struct {
 	errs    []error
 	mu      sync.Mutex
 	query   url.Values
+	path    string
+	method  string
 }
 
 var _ Context = &_context{}
@@ -131,6 +137,8 @@ func (c *_context) reset(w http.ResponseWriter, r *http.Request) {
 	c.errs = []error{}
 	c.mu = sync.Mutex{}
 	c.query = r.URL.Query()
+	c.path = ""
+	c.method = ""
 }
 
 func (c *_context) Writer() ResponseWriter {
@@ -277,20 +285,10 @@ func (c *_context) AbortWithStatus(status int) {
 }
 
 func (c *_context) Next() {
-	lastIndex := c.handler.LastIndex()
 	c.index++
 	for c.index < len(c.handler) {
 		if !c.skip {
 			handler := c.handler[c.index]
-			var key = "Middleware"
-			if c.index == lastIndex {
-				key = "Handler"
-			}
-			name := NameOfFunction(handler)
-			sp := CreateChildSpan(c.GetContext(), name)
-			defer sp.Finish()
-			sp.SetBaggageItem(key, name)
-			sp.SetTag(key, name)
 			handler(c)
 			c.index++
 		} else {
@@ -420,4 +418,20 @@ func (c *_context) Template(status int, v interface{}, filenames ...string) {
 		Template: template.Must(template.New("html").ParseFiles(filenames...)),
 		Data:     v,
 	})
+}
+
+func (c *_context) Path() string {
+	return c.path
+}
+
+func (c *_context) RealPath() string {
+	return c.req.URL.RawPath
+}
+
+func (c *_context) Method() string {
+	return c.method
+}
+
+func (c *_context) RealMethod() string {
+	return c.req.Method
 }

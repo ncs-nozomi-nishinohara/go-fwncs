@@ -14,8 +14,15 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+type RouterInfo struct {
+	Method      string
+	Path        string
+	HandlerName string
+}
+
+type MapRouterInformations map[string][]RouterInfo
 
 type HandlerFunc func(Context)
 
@@ -45,28 +52,18 @@ var DefaultTracing TraceHandler = func(method, path string, h httprouter.Handle)
 	}
 }
 
-type routerInfo struct {
-	method      string
-	path        string
-	handlerName string
-	handler     HandlerFunc
-}
-
 type Router struct {
 	Router  *httprouter.Router
 	group   string
 	logger  ILogger
 	use     []HandlerFunc
-	routes  map[string][]routerInfo
+	routes  MapRouterInformations
 	pool    *sync.Pool
-	tracing TraceHandler
 	usePool *sync.Pool
 }
 
-// var _ IRouter = &Router{}
-
 func Default(opts ...Options) *Router {
-	opts = append([]Options{LoggerOptions(DefaultLogger), UsePrometheus()}, opts...)
+	opts = append([]Options{LoggerOptions(DefaultLogger)}, opts...)
 	router := New(opts...)
 	router.Use(Logger(), Recovery(), RequestID())
 	return router
@@ -80,13 +77,17 @@ func New(opts ...Options) *Router {
 	if builder.logger == nil {
 		builder.logger = DefaultLogger
 	}
+	if builder.methodNotAllowedHandler == nil {
+		builder.methodNotAllowedHandler = methodNotAllowed
+	}
 	r := httprouter.New()
-	r.MethodNotAllowed = MethodNotAllowed()
+	r.MethodNotAllowed = builder.methodNotAllowedHandler
+	r.GlobalOPTIONS = builder.globalOPTIONS
 	router := &Router{
 		Router: r,
 		logger: builder.logger,
 		group:  "/",
-		routes: map[string][]routerInfo{},
+		routes: MapRouterInformations{},
 	}
 	router.pool = &sync.Pool{
 		New: func() interface{} {
@@ -109,28 +110,13 @@ func New(opts ...Options) *Router {
 			return cpHandler
 		},
 	}
-	if len(builder.elastic) > 0 {
-		router.tracing = Elastic(router, builder.elastic...)
-	}
-	if builder.newrelic != nil {
-		router.tracing = Newrelic(router, builder.newrelic)
-	}
-	if builder.opentracingTracer != nil {
-		router.tracing = JaegerMiddleware(router, builder.opentracingTracer, builder.opentracingOptions...)
-	}
-	if router.tracing == nil {
-		router.tracing = DefaultTracing
-	}
-	if builder.tracePrometheus {
-		router.Use(InstrumentHandlerInFlight, InstrumentHandlerDuration, InstrumentHandlerCounter, InstrumentHandlerResponseSize)
-		router.GET("/metrics", WrapHandler(promhttp.Handler()))
-	}
 	router.Router.NotFound = router.httpHandle()
 	return router
 }
 
-func httpRouterHandle(r *Router, h ...HandlerFunc) httprouter.Handle {
-	cpHandler := make(HandlerFuncChain, len(r.use)+len(h))
+func httpRouterHandle(r *Router, method, path string, h ...HandlerFunc) httprouter.Handle {
+	length := len(r.use) + len(h)
+	cpHandler := make(HandlerFuncChain, length)
 	copy(cpHandler, append(r.use, h...))
 	return func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
 		c := r.pool.Get().(*_context)
@@ -138,6 +124,8 @@ func httpRouterHandle(r *Router, h ...HandlerFunc) httprouter.Handle {
 		c.logger = r.logger
 		c.params = p
 		c.handler = cpHandler
+		c.path = path
+		c.method = method
 		c.Next()
 		r.pool.Put(c)
 	}
@@ -163,25 +151,24 @@ func (r *Router) httpHandle() http.Handler {
 	})
 }
 
-func (r *Router) httpRouterHandle(h ...HandlerFunc) httprouter.Handle {
-	return httpRouterHandle(r, h...)
+func (r *Router) httpRouterHandle(method, path string, h ...HandlerFunc) httprouter.Handle {
+	return httpRouterHandle(r, method, path, h...)
 }
 
 func (r *Router) Handler(method, path string, h ...HandlerFunc) {
 	info := r.routes[method]
 	if info == nil {
-		info = []routerInfo{}
+		info = []RouterInfo{}
 	}
 	lastHandler := HandlerFuncChain(h).Last()
-	info = append(info, routerInfo{
-		method:      method,
-		path:        path,
-		handlerName: NameOfFunction(lastHandler),
-		handler:     lastHandler,
+	info = append(info, RouterInfo{
+		Method:      method,
+		Path:        path,
+		HandlerName: NameOfFunction(lastHandler),
 	})
 	r.routes[method] = info
-	handle := r.httpRouterHandle(h...)
-	r.Router.Handle(r.tracing(method, r.path(path), handle))
+	handle := r.httpRouterHandle(method, path, h...)
+	r.Router.Handle(method, r.path(path), handle)
 }
 
 func (r *Router) GET(path string, h ...HandlerFunc) {
@@ -228,13 +215,12 @@ func (r *Router) Group(path string, middleware ...HandlerFunc) *Router {
 	u := make([]HandlerFunc, len(r.use)+len(middleware))
 	copy(u, append(r.use, middleware...))
 	return &Router{
-		Router:  r.Router,
-		group:   r.path(path),
-		logger:  r.logger,
-		use:     u,
-		routes:  r.routes,
-		pool:    r.pool,
-		tracing: r.tracing,
+		Router: r.Router,
+		group:  r.path(path),
+		logger: r.logger,
+		use:    u,
+		routes: r.routes,
+		pool:   r.pool,
 	}
 }
 
