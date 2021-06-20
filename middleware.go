@@ -49,19 +49,28 @@ func NewDefaultResponseBody(code int, message string) *DefaultResponseBody {
 	}
 }
 
-func NotFound() http.Handler {
+func notFound() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		render.WriteJson(w, NewDefaultResponseBody(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
 	})
 }
 
-func MethodNotAllowed() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		render.WriteJson(w, NewDefaultResponseBody(http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)))
-	})
-}
+var methodNotAllowed = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	render.WriteJson(w, NewDefaultResponseBody(http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)))
+})
+
+var defaultGlobalOPTIONS = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Access-Control-Request-Method") != "" {
+		// Set CORS headers
+		header := w.Header()
+		header.Set("Access-Control-Allow-Methods", header.Get("Allow"))
+		header.Set("Access-Control-Allow-Origin", "*")
+	}
+	// Adjust status code to 204
+	w.WriteHeader(http.StatusNoContent)
+})
 
 func Recovery() HandlerFunc {
 	return func(c Context) {

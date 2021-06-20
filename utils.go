@@ -16,34 +16,6 @@ func NameOfFunction(f interface{}) string {
 	return runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
 }
 
-type TransactionInfo struct {
-	transactionName string
-}
-
-func (t *TransactionInfo) Name() string {
-	return t.transactionName
-}
-
-func TransactionNameGenerator(router *Router) map[string]map[string]TransactionInfo {
-	routes := router.routes
-	rm := make(map[string]map[string]TransactionInfo)
-	for method, value := range routes {
-		mm := rm[method]
-		if mm == nil {
-			mm = make(map[string]TransactionInfo)
-			rm[method] = mm
-		}
-		for _, v := range value {
-			mm[v.handlerName] = TransactionInfo{
-				transactionName: method + " " + v.path,
-			}
-		}
-	}
-	return rm
-}
-
-const PackageName = "github.com/n-creativesystem/fwncs"
-
 func rewriteRulesRegex(rewrite map[string]string) map[*regexp.Regexp]string {
 	rulesRegex := map[*regexp.Regexp]string{}
 	for k, v := range rewrite {

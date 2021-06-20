@@ -1,17 +1,13 @@
 package fwncs
 
 import (
-	"github.com/newrelic/go-agent/v3/newrelic"
-	"github.com/opentracing/opentracing-go"
+	"net/http"
 )
 
 type Builder struct {
-	tracePrometheus    bool
-	elastic            []ElasticOption
-	newrelic           *newrelic.Application
-	opentracingTracer  opentracing.Tracer
-	opentracingOptions []OpentracingOption
-	logger             ILogger
+	logger                  ILogger
+	globalOPTIONS           http.Handler
+	methodNotAllowedHandler http.Handler
 }
 
 type Options func(builder *Builder)
@@ -20,36 +16,29 @@ func (o Options) Apply(builder *Builder) {
 	o(builder)
 }
 
-func UsePrometheus() Options {
-	return func(builder *Builder) {
-		builder.tracePrometheus = true
-	}
-}
-
-func UseElasticAPM(opts ...ElasticOption) Options {
-	return func(builder *Builder) {
-		builder.elastic = opts
-	}
-}
-
-func UseNewrelic(app *newrelic.Application) Options {
-	return func(builder *Builder) {
-		builder.newrelic = app
-	}
-}
-
-func UseOpentracing(tracer opentracing.Tracer, opts ...OpentracingOption) Options {
-	if tracer == nil {
-		tracer = getOpentracingTracer()
-	}
-	return func(builder *Builder) {
-		builder.opentracingTracer = tracer
-		builder.opentracingOptions = opts
-	}
-}
-
 func LoggerOptions(log ILogger) Options {
 	return func(builder *Builder) {
 		builder.logger = log
+	}
+}
+
+func MethodNotAllowed(handler http.Handler) Options {
+	if handler == nil {
+		handler = methodNotAllowed
+	}
+	return func(builder *Builder) {
+		builder.methodNotAllowedHandler = handler
+	}
+}
+
+func GlobalOPTIONS(handler http.Handler) Options {
+	return func(builder *Builder) {
+		builder.globalOPTIONS = handler
+	}
+}
+
+func DefaultGlobalOPTIONS() Options {
+	return func(builder *Builder) {
+		builder.globalOPTIONS = defaultGlobalOPTIONS
 	}
 }
