@@ -307,3 +307,67 @@ func TestStaticWeightingLoadBalancer3(t *testing.T) {
 		})
 	}
 }
+
+func TestStaticWeightingLoadBalancer4(t *testing.T) {
+	targets := []*fwncs.ProxyTarget{
+		{
+			Name: "target 1",
+			URL:  nil,
+		},
+		{
+			Name: "target 2",
+			URL:  nil,
+		},
+	}
+
+	t1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "target 1")
+	}))
+	defer t1.Close()
+	url1, _ := url.Parse(t1.URL)
+
+	t2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "target 2")
+	}))
+	defer t2.Close()
+	url2, _ := url.Parse(t2.URL)
+	wTargets := []*fwncs.WeightProxyTarget{
+		{
+			Weight: 1,
+			ProxyTarget: &fwncs.ProxyTarget{
+				Name: "target 1",
+				URL:  url1,
+			},
+		},
+		{
+			Weight: 1,
+			ProxyTarget: &fwncs.ProxyTarget{
+				Name: "target 2",
+				URL:  url2,
+			},
+		},
+	}
+	swrb := fwncs.NewStaticWeightedRoundRobinBalancer(wTargets)
+	for _, target := range wTargets {
+		assert.False(t, swrb.Add(target))
+	}
+	// type error
+	for _, target := range targets {
+		assert.False(t, swrb.Add(target))
+	}
+	router := fwncs.New()
+	router.Use(fwncs.Proxy(swrb))
+	expected := map[string]bool{
+		"target 1": true,
+		"target 2": true,
+	}
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		assert.Condition(t, func() bool {
+			return expected[body]
+		})
+	}
+}
