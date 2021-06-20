@@ -225,7 +225,7 @@ func (r *Router) Use(middleware ...HandlerFunc) {
 }
 
 func (r *Router) Group(path string, middleware ...HandlerFunc) *Router {
-	u := make([]HandlerFunc, len(r.use))
+	u := make([]HandlerFunc, len(r.use)+len(middleware))
 	copy(u, append(r.use, middleware...))
 	return &Router{
 		Router:  r.Router,
