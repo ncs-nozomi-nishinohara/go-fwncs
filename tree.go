@@ -105,7 +105,7 @@ func (nodes locationNodes) Match(rawURI string) (param *paramNode) {
 			start := idx[0]
 			end := idx[1]
 			value := matchValue[i]
-			if lastChar(value) == '/' {
+			if value != "" && lastChar(value) == '/' {
 				value = value[0 : len(value)-1]
 			}
 			params[i] = Param{
@@ -114,7 +114,7 @@ func (nodes locationNodes) Match(rawURI string) (param *paramNode) {
 			}
 		}
 		param = &paramNode{
-			index:     index,
+			index:     node.index,
 			params:    &params,
 			matchPath: node.originalPath,
 		}
