@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -129,13 +130,26 @@ func newRouter(logger ILogger) *Router {
 	return router
 }
 
+var match, _ = regexp.Compile("(?P<match>= ?)")
+var prefixMatch, _ = regexp.Compile("(?P<match>~ ?)")
+
 func (r *Router) path(relativePath string) string {
+	matchFlg := match.MatchString(relativePath)
+	prefixMatchFlg := prefixMatch.MatchString(relativePath)
+	relativePath = match.ReplaceAllString(relativePath, "")
+	relativePath = prefixMatch.ReplaceAllString(relativePath, "")
 	if relativePath == "" {
 		return r.group
 	}
 	p := path.Join(r.group, relativePath)
 	if lastChar(relativePath) == '/' && lastChar(p) != '/' {
 		return p + "/"
+	}
+	if matchFlg {
+		p = "= " + p
+	}
+	if prefixMatchFlg {
+		p = "~ " + p
 	}
 	return p
 }
