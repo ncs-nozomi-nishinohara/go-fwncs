@@ -122,19 +122,10 @@ func langsContains(arr []GitHubLang, str string) (bool, int) {
 }
 
 func main() {
-	closer, err := fwncs.NewJaegertracing()
-	if err != nil {
-		panic(err)
-	}
-	defer closer.Close()
-	router := fwncs.Default(fwncs.UseOpentracing(nil))
+	router := fwncs.Default()
 	router.GET("/get/:username", func(c fwncs.Context) {
 		username := c.Param("username")
 		github := &apiGitHub{Client: &GithubClientImpl{}}
-		sp := fwncs.CreateChildSpan(c.GetContext(), "Call API")
-		defer sp.Finish()
-		sp.SetBaggageItem("Func", "GetColor")
-		sp.SetTag("Func", "GetColor")
 		err, langs := github.DoGetColor(username)
 		if err != nil {
 			c.Error(err)

@@ -2,8 +2,6 @@ package fwncs
 
 import (
 	"net/http"
-
-	"github.com/julienschmidt/httprouter"
 )
 
 type HandlerWrap struct {
@@ -18,12 +16,6 @@ func NewHandlerWrap(h interface{}) http.Handler {
 
 func (h *HandlerWrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch handler := h.next.(type) {
-	case func(http.ResponseWriter, *http.Request, httprouter.Params):
-		p := httprouter.ParamsFromContext(r.Context())
-		handler(w, r, p)
-	case httprouter.Handle:
-		p := httprouter.ParamsFromContext(r.Context())
-		handler(w, r, p)
 	case http.HandlerFunc:
 		handler.ServeHTTP(w, r)
 	case http.Handler:
