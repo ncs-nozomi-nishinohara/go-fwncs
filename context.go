@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/julienschmidt/httprouter"
 	"github.com/n-creativesystem/go-fwncs/constant"
 	"github.com/n-creativesystem/go-fwncs/render"
 )
@@ -55,7 +54,7 @@ type Context interface {
 		Query or URL parameter
 	*/
 	Param(name string) string
-	Params() httprouter.Params
+	Params() Params
 	QueryParam(name string) string
 	DefaultQuery(name string, defaultValue string) string
 
@@ -108,20 +107,22 @@ type Context interface {
 }
 
 type _context struct {
-	router  *Router
-	w       ResponseWriter
-	req     *http.Request
-	params  httprouter.Params
-	logger  ILogger
-	skip    bool
-	handler HandlerFuncChain
-	index   int
-	mp      map[string]interface{}
-	errs    []error
-	mu      sync.Mutex
-	query   url.Values
-	path    string
-	method  string
+	router   *Router
+	w        ResponseWriter
+	req      *http.Request
+	params   *Params
+	logger   ILogger
+	skip     bool
+	handler  HandlerFuncChain
+	index    int
+	mp       map[string]interface{}
+	errs     []error
+	mu       sync.Mutex
+	query    url.Values
+	path     string
+	method   string
+	_Params  Params
+	fullPath string
 }
 
 var _ Context = &_context{}
@@ -129,12 +130,13 @@ var _ Context = &_context{}
 func (c *_context) reset(w http.ResponseWriter, r *http.Request) {
 	c.w = wrapResponseWriter(w, c.logger)
 	c.req = r
-	c.params = httprouter.Params{}
+	c._Params = c._Params[:0]
+	*c.params = (*c.params)[:0]
 	c.skip = false
-	c.handler = HandlerFuncChain{}
+	c.handler = nil
 	c.index = -1
 	c.mp = map[string]interface{}{}
-	c.errs = []error{}
+	c.errs = c.errs[:0]
 	c.mu = sync.Mutex{}
 	c.query = r.URL.Query()
 	c.path = ""
@@ -253,8 +255,8 @@ func (c *_context) Param(name string) string {
 	return c.params.ByName(name)
 }
 
-func (c *_context) Params() httprouter.Params {
-	return c.params
+func (c *_context) Params() Params {
+	return *c.params
 }
 
 func (c *_context) Logger() ILogger {

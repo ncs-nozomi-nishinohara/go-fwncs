@@ -295,7 +295,7 @@ func TestGroupMiddleware(t *testing.T) {
 	w.Result().Body.Close()
 	assert.Equal(t, "ab", test)
 	test = ""
-	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	req = httptest.NewRequest(http.MethodGet, "/test/", nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	w.Result().Body.Close()

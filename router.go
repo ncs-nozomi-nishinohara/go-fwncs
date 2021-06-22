@@ -9,11 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/julienschmidt/httprouter"
 )
 
 type RouterInfo struct {
@@ -44,22 +43,30 @@ func (hc HandlerFuncChain) LastIndex() int {
 
 type HandlerMiddleware func(next http.Handler) http.Handler
 
-type TraceHandler func(method, path string, h httprouter.Handle) (string, string, httprouter.Handle)
-
-var DefaultTracing TraceHandler = func(method, path string, h httprouter.Handle) (string, string, httprouter.Handle) {
-	return method, path, func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-		h(w, r, p)
-	}
+type pathHandler struct {
+	paths   []string
+	handler []HandlerFuncChain
 }
 
 type Router struct {
-	Router  *httprouter.Router
-	group   string
-	logger  ILogger
-	use     []HandlerFunc
-	routes  MapRouterInformations
-	pool    *sync.Pool
-	usePool *sync.Pool
+	UseRawPath             bool
+	UnescapePathValues     bool
+	RemoveExtraSlash       bool
+	RedirectFixedPath      bool
+	HandleMethodNotAllowed bool
+	group                  string
+	logger                 ILogger
+	use                    []HandlerFunc
+	routes                 MapRouterInformations
+	pool                   *sync.Pool
+	usePool                *sync.Pool
+	trees                  map[string]nodelocation
+	pathHandlers           map[string]pathHandler
+	allNotFound            HandlerFuncChain
+	allNoMethod            HandlerFuncChain
+	notFound               HandlerFuncChain
+	noMethod               HandlerFuncChain
+	maxParams              uint16
 }
 
 func Default(opts ...Options) *Router {
@@ -80,14 +87,22 @@ func New(opts ...Options) *Router {
 	if builder.methodNotAllowedHandler == nil {
 		builder.methodNotAllowedHandler = methodNotAllowed
 	}
-	r := httprouter.New()
-	r.MethodNotAllowed = builder.methodNotAllowedHandler
-	r.GlobalOPTIONS = builder.globalOPTIONS
+	router := newRouter(builder.logger)
+	return router
+}
+
+func newRouter(logger ILogger) *Router {
 	router := &Router{
-		Router: r,
-		logger: builder.logger,
-		group:  "/",
-		routes: MapRouterInformations{},
+		logger:                 logger,
+		group:                  "/",
+		routes:                 MapRouterInformations{},
+		UseRawPath:             false,
+		RemoveExtraSlash:       false,
+		UnescapePathValues:     true,
+		RedirectFixedPath:      false,
+		HandleMethodNotAllowed: true,
+		trees:                  map[string]nodelocation{},
+		pathHandlers:           map[string]pathHandler{},
 	}
 	router.pool = &sync.Pool{
 		New: func() interface{} {
@@ -97,6 +112,7 @@ func New(opts ...Options) *Router {
 				index:  -1,
 				mu:     sync.Mutex{},
 				logger: router.logger,
+				params: &Params{},
 			}
 		},
 	}
@@ -110,52 +126,23 @@ func New(opts ...Options) *Router {
 			return cpHandler
 		},
 	}
-	router.Router.NotFound = router.httpHandle()
 	return router
-}
-
-func httpRouterHandle(r *Router, method, path string, h ...HandlerFunc) httprouter.Handle {
-	length := len(r.use) + len(h)
-	cpHandler := make(HandlerFuncChain, length)
-	copy(cpHandler, append(r.use, h...))
-	return func(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
-		c := r.pool.Get().(*_context)
-		c.reset(w, req)
-		c.logger = r.logger
-		c.params = p
-		c.handler = cpHandler
-		c.path = path
-		c.method = method
-		c.Next()
-		r.pool.Put(c)
-	}
 }
 
 func (r *Router) path(relativePath string) string {
 	if relativePath == "" {
 		return r.group
 	}
-	return path.Join(r.group, relativePath)
-}
-
-func (r *Router) httpHandle() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		cpHandler := r.usePool.Get().(HandlerFuncChain)
-		c := r.pool.Get().(*_context)
-		c.reset(w, req)
-		c.logger = r.logger
-		c.handler = cpHandler
-		c.Next()
-		r.pool.Put(c)
-		r.usePool.Put(cpHandler)
-	})
-}
-
-func (r *Router) httpRouterHandle(method, path string, h ...HandlerFunc) httprouter.Handle {
-	return httpRouterHandle(r, method, path, h...)
+	p := path.Join(r.group, relativePath)
+	if lastChar(relativePath) == '/' && lastChar(p) != '/' {
+		return p + "/"
+	}
+	return p
 }
 
 func (r *Router) Handler(method, path string, h ...HandlerFunc) {
+	path = r.path(path)
+	h = r.mergeHandlers(h)
 	info := r.routes[method]
 	if info == nil {
 		info = []RouterInfo{}
@@ -167,8 +154,18 @@ func (r *Router) Handler(method, path string, h ...HandlerFunc) {
 		HandlerName: NameOfFunction(lastHandler),
 	})
 	r.routes[method] = info
-	handle := r.httpRouterHandle(method, path, h...)
-	r.Router.Handle(method, r.path(path), handle)
+	ph, ok := r.pathHandlers[method]
+	if !ok {
+		ph = pathHandler{
+			paths:   []string{},
+			handler: []HandlerFuncChain{},
+		}
+	}
+	ph.paths = append(ph.paths, path)
+	ph.handler = append(ph.handler, h)
+	r.pathHandlers[method] = ph
+	locations := locationRegex(ph.paths)
+	r.trees[method] = locations
 }
 
 func (r *Router) GET(path string, h ...HandlerFunc) {
@@ -199,29 +196,23 @@ func (r *Router) OPTIONS(path string, h ...HandlerFunc) {
 	r.Handler(http.MethodOptions, path, h...)
 }
 
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.Router.ServeHTTP(w, req)
-}
-
-func (r *Router) ServeFiles(path string, root http.FileSystem) {
-	r.Router.ServeFiles(path, root)
-}
-
 func (r *Router) Use(middleware ...HandlerFunc) {
 	r.use = append(r.use, middleware...)
+	r.rebuild404Handlers()
+	r.rebuild405Handlers()
 }
 
 func (r *Router) Group(path string, middleware ...HandlerFunc) *Router {
-	u := make([]HandlerFunc, len(r.use)+len(middleware))
-	copy(u, append(r.use, middleware...))
-	return &Router{
-		Router: r.Router,
-		group:  r.path(path),
-		logger: r.logger,
-		use:    u,
-		routes: r.routes,
-		pool:   r.pool,
-	}
+	u := r.mergeHandlers(middleware)
+	router := newRouter(r.logger)
+	router.group = r.path(path)
+	router.use = u
+	router.routes = r.routes
+	router.pool = r.pool
+	router.trees = r.trees
+	router.pathHandlers = r.pathHandlers
+	router.maxParams = r.maxParams
+	return router
 }
 
 func (r *Router) Any(path string, h ...HandlerFunc) *Router {
@@ -233,6 +224,34 @@ func (r *Router) Any(path string, h ...HandlerFunc) *Router {
 	r.PATCH(path, h...)
 	r.DELETE(path, h...)
 	return r
+}
+
+func (r *Router) rebuild404Handlers() {
+	r.allNotFound = r.mergeHandlers(r.notFound)
+}
+
+func (r *Router) rebuild405Handlers() {
+	r.allNoMethod = r.mergeHandlers(r.noMethod)
+}
+
+func (r *Router) NotFound(h ...HandlerFunc) *Router {
+	r.notFound = r.mergeHandlers(h)
+	r.rebuild404Handlers()
+	return r
+}
+
+func (r *Router) NoMethod(h ...HandlerFunc) *Router {
+	r.noMethod = h
+	r.rebuild405Handlers()
+	return r
+}
+
+func (r *Router) mergeHandlers(handlers HandlerFuncChain) HandlerFuncChain {
+	length := len(r.use) + len(handlers)
+	h := make(HandlerFuncChain, length)
+	copy(h, r.use)
+	copy(h[len(r.use):], handlers)
+	return h
 }
 
 func (r *Router) Run(port int) error {
@@ -310,4 +329,101 @@ func (r *Router) run(s *http.Server) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 	return s.Shutdown(ctx)
+}
+
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	c := r.pool.Get().(*_context)
+	cpHandler := r.usePool.Get().(HandlerFuncChain)
+	c.reset(w, req)
+	c.logger = r.logger
+	c.handler = cpHandler
+
+	r.handleHTTPRequest(c)
+
+	r.pool.Put(c)
+	r.usePool.Put(cpHandler)
+}
+
+func (r *Router) ServeFiles(paths string, fs http.FileSystem) {
+	if strings.Contains(paths, ":") || strings.Contains(paths, "*") {
+		panic("URL parameters can not be used when serving a static folder")
+	}
+	handler := r.createStaticHandler(paths, fs)
+	urlPattern := path.Join(paths, "/*filepath")
+
+	// Register GET and HEAD handlers
+	r.GET(urlPattern, handler)
+	r.HEAD(urlPattern, handler)
+}
+
+func (r *Router) handleHTTPRequest(c *_context) {
+	httpMethod := c.req.Method
+	rPath := c.req.URL.Path
+	if r.UseRawPath && len(c.req.URL.RawPath) > 0 {
+		rPath = c.req.URL.RawPath
+	}
+
+	if r.RemoveExtraSlash {
+		rPath = cleanPath(rPath)
+	}
+
+	// Find root of the tree for the given HTTP method
+	var node *paramNode
+	t, ok := r.trees[httpMethod]
+	if ok {
+		node = matchURL(t, rPath)
+	}
+	if node != nil {
+		ph := r.pathHandlers[httpMethod]
+		c.fullPath = ph.paths[node.index]
+		*c.params = *node.params
+		c.handler = ph.handler[node.index]
+		c.Next()
+		c.w.WriteHeaderNow()
+		return
+	}
+	if r.HandleMethodNotAllowed {
+		for method, node := range r.trees {
+			if method == httpMethod {
+				continue
+			}
+			if value := matchURL(node, rPath); value != nil {
+				c.handler = r.allNoMethod
+				serveError(c, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+		}
+	}
+	c.handler = r.allNotFound
+	serveError(c, http.StatusNotFound, "page not found")
+}
+
+func (r *Router) createStaticHandler(relativePath string, fs http.FileSystem) HandlerFunc {
+	absolutePath := r.path(relativePath)
+	fileServer := http.StripPrefix(absolutePath, http.FileServer(fs))
+
+	return func(c Context) {
+		file := c.Param("filepath")
+		f, err := fs.Open(file)
+		if err != nil {
+			c.Writer().WriteHeader(http.StatusNotFound)
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		f.Close()
+		fileServer.ServeHTTP(c.Writer(), c.Request())
+	}
+}
+
+func serveError(c Context, code int, message string) {
+	c.SetStatus(code)
+	c.Next()
+	if c.Writer().Written() {
+		return
+	}
+	if c.Writer().Status() == code {
+		c.JSON(code, NewDefaultResponseBody(code, message))
+		return
+	}
+	c.Writer().WriteHeaderNow()
 }
