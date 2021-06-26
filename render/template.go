@@ -13,6 +13,7 @@ type TemplateRender struct {
 }
 
 func (r TemplateRender) Render(w http.ResponseWriter) error {
+	r.WriteContentType(w)
 	return r.Template.Execute(w, r.Data)
 }
 

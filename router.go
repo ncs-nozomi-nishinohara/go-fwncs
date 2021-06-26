@@ -430,13 +430,33 @@ func (r *Router) createStaticHandler(relativePath string, fs http.FileSystem) Ha
 }
 
 func serveError(c Context, code int, message string) {
-	c.SetStatus(code)
+	// c.SetStatus(code)
 	c.Next()
+	if c.Writer().Status() == http.StatusOK {
+		c.SetStatus(code)
+	}
 	if c.Writer().Written() {
 		return
 	}
 	if c.Writer().Status() == code {
-		c.JSON(code, NewDefaultResponseBody(code, message))
+		htmlText := `
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Message}}</title>
+</head>
+<body>
+  <p>{{.Message}}</p>
+</body>
+</html>
+		`
+
+		c.TemplateText(code, htmlText, map[string]string{
+			"Message": http.StatusText(code),
+		})
 		return
 	}
 	c.Writer().WriteHeaderNow()
