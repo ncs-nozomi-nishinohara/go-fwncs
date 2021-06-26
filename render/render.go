@@ -13,8 +13,7 @@ type Render interface {
 }
 
 func writeContentType(w http.ResponseWriter, value fmt.Stringer) {
-	header := w.Header()
-	header.Set(constant.HeaderContentType, value.String())
+	w.Header().Set(constant.HeaderContentType, value.String())
 }
 
 var (

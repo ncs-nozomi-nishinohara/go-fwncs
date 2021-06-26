@@ -50,13 +50,13 @@ func TestDefaultRouter(t *testing.T) {
 				route.ServeHTTP(rw, req)
 				defer rw.Result().Body.Close()
 				assert.Equal(t, 404, rw.Result().StatusCode)
-				assert.Equal(t, constant.JSON.String(), rw.Header().Get("Content-Type"))
+				assert.Equal(t, constant.HTML.String(), rw.Header().Get("Content-Type"))
 				req = httptest.NewRequest(http.MethodPost, "/", nil)
 				rw = httptest.NewRecorder()
 				route.ServeHTTP(rw, req)
 				defer rw.Result().Body.Close()
 				assert.Equal(t, 405, rw.Result().StatusCode)
-				assert.Equal(t, constant.JSON.String(), rw.Header().Get("Content-Type"))
+				assert.Equal(t, constant.HTML.String(), rw.Header().Get("Content-Type"))
 			},
 		},
 		{
