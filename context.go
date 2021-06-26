@@ -83,6 +83,7 @@ type Context interface {
 	AsciiJSON(status int, v interface{})
 	YAML(status int, v interface{})
 	Template(status int, v interface{}, filenames ...string)
+	TemplateText(status int, text string, v interface{})
 
 	/*
 		Middlewere or handler
@@ -418,6 +419,13 @@ func (c *_context) YAML(status int, v interface{}) {
 func (c *_context) Template(status int, v interface{}, filenames ...string) {
 	c.Render(status, render.TemplateRender{
 		Template: template.Must(template.New("html").ParseFiles(filenames...)),
+		Data:     v,
+	})
+}
+
+func (c *_context) TemplateText(status int, text string, v interface{}) {
+	c.Render(status, render.TemplateRender{
+		Template: template.Must(template.New("html").Parse(text)),
 		Data:     v,
 	})
 }

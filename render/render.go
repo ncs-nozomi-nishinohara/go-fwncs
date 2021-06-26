@@ -15,9 +15,6 @@ type Render interface {
 func writeContentType(w http.ResponseWriter, value fmt.Stringer) {
 	header := w.Header()
 	header.Set(constant.HeaderContentType, value.String())
-	// if val := header.Get(constant.HeaderContentType); len(val) == 0 {
-
-	// }
 }
 
 var (
