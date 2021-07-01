@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/n-creativesystem/go-fwncs/constant"
-	"github.com/n-creativesystem/go-fwncs/render"
 )
 
 type DefaultResponseBody struct {
@@ -48,29 +47,6 @@ func NewDefaultResponseBody(code int, message string) *DefaultResponseBody {
 		Message: message,
 	}
 }
-
-func notFound() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		render.WriteJson(w, NewDefaultResponseBody(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
-	})
-}
-
-var methodNotAllowed = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-	w.WriteHeader(http.StatusMethodNotAllowed)
-	render.WriteJson(w, NewDefaultResponseBody(http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)))
-})
-
-var defaultGlobalOPTIONS = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Access-Control-Request-Method") != "" {
-		// Set CORS headers
-		header := w.Header()
-		header.Set("Access-Control-Allow-Methods", header.Get("Allow"))
-		header.Set("Access-Control-Allow-Origin", "*")
-	}
-	// Adjust status code to 204
-	w.WriteHeader(http.StatusNoContent)
-})
 
 func Recovery() HandlerFunc {
 	return func(c Context) {
@@ -115,7 +91,7 @@ func RequestIDWithConfig(config RequestIDConfig) HandlerFunc {
 		config.Generator = requestIDGenerator
 	}
 	return func(c Context) {
-		rid := c.Header().Get(constant.HeaderXRequestID)
+		rid := c.GetRequestID()
 		if rid == "" {
 			rid = config.Generator()
 		}
@@ -123,6 +99,12 @@ func RequestIDWithConfig(config RequestIDConfig) HandlerFunc {
 		ctx = context.WithValue(ctx, requestIDKey, rid)
 		c.SetContext(ctx)
 		c.SetHeader(constant.HeaderXRequestID, rid)
+		idCookie := new(http.Cookie)
+		idCookie.Path = "/"
+		idCookie.Name = constant.HeaderXRequestID
+		idCookie.Value = rid
+		idCookie.MaxAge = 0
+		c.SetCookie(idCookie)
 		c.Next()
 	}
 }

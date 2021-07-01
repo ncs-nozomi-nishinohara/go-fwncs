@@ -85,9 +85,6 @@ func New(opts ...Options) *Router {
 	if builder.logger == nil {
 		builder.logger = DefaultLogger
 	}
-	if builder.methodNotAllowedHandler == nil {
-		builder.methodNotAllowedHandler = methodNotAllowed
-	}
 	router := newRouter(builder.logger)
 	return router
 }

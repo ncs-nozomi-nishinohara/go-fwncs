@@ -69,6 +69,7 @@ type Context interface {
 	/*
 		Cookie
 	*/
+	SetCookie(cookie *http.Cookie)
 	Cookie(name string) (*http.Cookie, error)
 	Cookies() []*http.Cookie
 
@@ -95,6 +96,7 @@ type Context interface {
 	Set(key string, value interface{})
 	Get(key string) interface{}
 	Redirect(status int, url string)
+	GetRequestID() string
 
 	/*
 		Utils
@@ -315,6 +317,17 @@ func (c *_context) Get(key string) interface{} {
 	return c.mp[key]
 }
 
+func (c *_context) GetRequestID() string {
+	rid := c.Header().Get(constant.HeaderXRequestID)
+	if rid == "" {
+		idCookie, err := c.Cookie(constant.HeaderXRequestID)
+		if err == nil {
+			rid = idCookie.Value
+		}
+	}
+	return rid
+}
+
 func (c *_context) ReadJsonBody(v interface{}) error {
 	return json.NewDecoder(c.req.Body).Decode(v)
 }
@@ -343,6 +356,10 @@ func (c *_context) DefaultQuery(name string, defaultValue string) string {
 
 func (c *_context) FormValue(name string) string {
 	return c.req.FormValue(name)
+}
+
+func (c *_context) SetCookie(cookie *http.Cookie) {
+	http.SetCookie(c.Writer(), cookie)
 }
 
 func (c *_context) Cookie(name string) (*http.Cookie, error) {
